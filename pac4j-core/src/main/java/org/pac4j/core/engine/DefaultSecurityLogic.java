@@ -21,6 +21,7 @@ import org.pac4j.core.profile.CommonProfile;
 import org.pac4j.core.profile.ProfileManager;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.pac4j.core.util.CommonHelper.*;
 
@@ -104,15 +105,15 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
                         if (currentClient instanceof DirectClient) {
                             logger.debug("Performing authentication for direct client: {}", currentClient);
 
-                            final Credentials credentials = currentClient.getCredentials(context);
+                            final Optional<Credentials> credentials = currentClient.getCredentials(context);
                             logger.debug("credentials: {}", credentials);
-                            final CommonProfile profile = currentClient.getUserProfile(credentials, context);
+                            final Optional<CommonProfile> profile = currentClient.getUserProfile(credentials, context);
                             logger.debug("profile: {}", profile);
-                            if (profile != null) {
+                            if (profile.isPresent()) {
                                 final boolean saveProfileInSession = saveProfileInSession(context, currentClients, (DirectClient)
                                     currentClient, profile);
                                 logger.debug("saveProfileInSession: {} / multiProfile: {}", saveProfileInSession, multiProfile);
-                                manager.save(saveProfileInSession, profile, multiProfile);
+                                manager.save(saveProfileInSession, profile.get(), multiProfile);
                                 updated = true;
                                 if (!multiProfile) {
                                     break;
@@ -184,7 +185,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
      * @return whether we need to save the profile in session
      */
     protected boolean saveProfileInSession(final C context, final List<Client> currentClients, final DirectClient directClient,
-                                           final CommonProfile profile) {
+                                           final Optional<CommonProfile> profile) {
         return this.saveProfileInSession;
     }
 
