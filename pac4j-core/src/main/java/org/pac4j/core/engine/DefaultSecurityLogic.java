@@ -13,13 +13,16 @@ import org.pac4j.core.config.Config;
 import org.pac4j.core.context.Pac4jConstants;
 import org.pac4j.core.context.WebContext;
 import org.pac4j.core.credentials.Credentials;
+import org.pac4j.core.engine.decision.DefaultProfileStorageDecision;
+import org.pac4j.core.engine.decision.ProfileStorageDecision;
 import org.pac4j.core.exception.HttpAction;
 import org.pac4j.core.http.adapter.HttpActionAdapter;
-import org.pac4j.core.matching.RequireAllMatchersChecker;
 import org.pac4j.core.matching.MatchingChecker;
+import org.pac4j.core.matching.RequireAllMatchersChecker;
 import org.pac4j.core.profile.CommonProfile;
 import org.pac4j.core.profile.ProfileManager;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,16 +30,16 @@ import static org.pac4j.core.util.CommonHelper.*;
 
 /**
  * <p>Default security logic:</p>
- *
+ * <p>
  * <p>If the HTTP request matches the <code>matchers</code> configuration (or no <code>matchers</code> are defined),
  * the security is applied. Otherwise, the user is automatically granted access.</p>
- *
+ * <p>
  * <p>First, if the user is not authenticated (no profile) and if some clients have been defined in the <code>clients</code> parameter,
  * a login is tried for the direct clients.</p>
- *
+ * <p>
  * <p>Then, if the user has profile, authorizations are checked according to the <code>authorizers</code> configuration.
  * If the authorizations are valid, the user is granted access. Otherwise, a 403 error page is displayed.</p>
- *
+ * <p>
  * <p>Finally, if the user is still not authenticated (no profile), he is redirected to the appropriate identity provider
  * if the first defined client is an indirect one in the <code>clients</code> configuration. Otherwise, a 401 error page is displayed.</p>
  *
@@ -51,7 +54,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
 
     private MatchingChecker matchingChecker = new RequireAllMatchersChecker();
 
-    private boolean saveProfileInSession;
+    private ProfileStorageDecision profileStorageDecision = new DefaultProfileStorageDecision();
 
     @Override
     public R perform(final C context, final Config config, final SecurityGrantedAccessAdapter<R, C> securityGrantedAccessAdapter,
@@ -79,6 +82,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
             assertNotNull("clientFinder", clientFinder);
             assertNotNull("authorizationChecker", authorizationChecker);
             assertNotNull("matchingChecker", matchingChecker);
+            assertNotNull("profileStorageDecision", profileStorageDecision);
             final Clients configClients = config.getClients();
             assertNotNull("configClients", configClients);
 
@@ -91,7 +95,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
                 final List<Client> currentClients = clientFinder.find(configClients, context, clients);
                 logger.debug("currentClients: {}", currentClients);
 
-                final boolean loadProfilesFromSession = loadProfilesFromSession(context, currentClients);
+                final boolean loadProfilesFromSession = profileStorageDecision.mustLoadProfilesFromSession(context, currentClients);
                 logger.debug("loadProfilesFromSession: {}", loadProfilesFromSession);
                 final ProfileManager manager = getProfileManager(context, config);
                 List<CommonProfile> profiles = manager.getAll(loadProfilesFromSession);
@@ -110,8 +114,8 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
                             final Optional<CommonProfile> profile = currentClient.getUserProfile(credentials, context);
                             logger.debug("profile: {}", profile);
                             if (profile.isPresent()) {
-                                final boolean saveProfileInSession = saveProfileInSession(context, currentClients, (DirectClient)
-                                    currentClient, profile);
+                                final boolean saveProfileInSession = profileStorageDecision.mustSaveProfileInSession(context,
+                                    currentClients, (DirectClient) currentClient, profile.get());
                                 logger.debug("saveProfileInSession: {} / multiProfile: {}", saveProfileInSession, multiProfile);
                                 manager.save(saveProfileInSession, profile.get(), multiProfile);
                                 updated = true;
@@ -132,7 +136,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
                     logger.debug("authorizers: {}", authorizers);
                     if (authorizationChecker.isAuthorized(context, profiles, authorizers, config.getAuthorizers())) {
                         logger.debug("authenticated and authorized -> grant access");
-                        return securityGrantedAccessAdapter.adapt(context, parameters);
+                        return securityGrantedAccessAdapter.adapt(context, profiles, parameters);
                     } else {
                         logger.debug("forbidden");
                         action = forbidden(context, currentClients, profiles, authorizers);
@@ -151,10 +155,10 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
             } else {
 
                 logger.debug("no matching for this request -> grant access");
-                return securityGrantedAccessAdapter.adapt(context, parameters);
+                return securityGrantedAccessAdapter.adapt(context, Arrays.asList(), parameters);
             }
 
-        } catch (final RuntimeException e) {
+        } catch (final Exception e) {
             return handleException(e, httpActionAdapter, context);
         }
 
@@ -165,7 +169,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
      * Load the profiles from the web context if no clients are defined or if the first client is an indirect one
      * or the {@link AnonymousClient}.
      *
-     * @param context the web context
+     * @param context        the web context
      * @param currentClients the current clients
      * @return whether the profiles must be loaded from the web session
      */
@@ -175,27 +179,12 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
     }
 
     /**
-     * Whether we need to save the profile in session after the authentication of direct client(s). <code>false</code>
-     * by default as direct clients profiles are not meant to be saved in the web session.
-     *
-     * @param context the web context
-     * @param currentClients the current clients
-     * @param directClient the direct clients
-     * @param profile the retrieved profile after login
-     * @return whether we need to save the profile in session
-     */
-    protected boolean saveProfileInSession(final C context, final List<Client> currentClients, final DirectClient directClient,
-                                           final Optional<CommonProfile> profile) {
-        return this.saveProfileInSession;
-    }
-
-    /**
      * Return a forbidden error.
      *
-     * @param context the web context
+     * @param context        the web context
      * @param currentClients the current clients
-     * @param profiles the current profiles
-     * @param authorizers the authorizers
+     * @param profiles       the current profiles
+     * @param authorizers    the authorizers
      * @return a forbidden error
      */
     protected HttpAction forbidden(final C context, final List<Client> currentClients, final List<CommonProfile> profiles,
@@ -206,7 +195,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
     /**
      * Return whether we must start a login process if the first client is an indirect one.
      *
-     * @param context the web context
+     * @param context        the web context
      * @param currentClients the current clients
      * @return whether we must start a login process
      */
@@ -217,7 +206,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
     /**
      * Save the requested url.
      *
-     * @param context the web context
+     * @param context        the web context
      * @param currentClients the current clients
      */
     protected void saveRequestedUrl(final C context, final List<Client> currentClients) {
@@ -229,7 +218,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
     /**
      * Perform a redirection to start the login process of the first indirect client.
      *
-     * @param context the web context
+     * @param context        the web context
      * @param currentClients the current clients
      * @return the performed redirection
      */
@@ -241,7 +230,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
     /**
      * Return an unauthorized error.
      *
-     * @param context the web context
+     * @param context        the web context
      * @param currentClients the current clients
      * @return an unauthorized error
      */
@@ -273,18 +262,18 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
         this.matchingChecker = matchingChecker;
     }
 
-    public boolean isSaveProfileInSession() {
-        return saveProfileInSession;
+    public ProfileStorageDecision getProfileStorageDecision() {
+        return profileStorageDecision;
     }
 
-    public void setSaveProfileInSession(final boolean saveProfileInSession) {
-        this.saveProfileInSession = saveProfileInSession;
+    public void setProfileStorageDecision(final ProfileStorageDecision profileStorageDecision) {
+        this.profileStorageDecision = profileStorageDecision;
     }
 
     @Override
     public String toString() {
-        return toNiceString(this.getClass(), "clientFinder", clientFinder, "authorizationChecker", authorizationChecker,
-            "matchingChecker", matchingChecker, "saveProfileInSession", saveProfileInSession, "errorUrl", getErrorUrl());
+        return toNiceString(this.getClass(), "clientFinder", this.clientFinder, "authorizationChecker", this.authorizationChecker,
+            "matchingChecker", this.matchingChecker, "profileStorageDecision", this.profileStorageDecision,
+            "errorUrl", getErrorUrl());
     }
 }
-
