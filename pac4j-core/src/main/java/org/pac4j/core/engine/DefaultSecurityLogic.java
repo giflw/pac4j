@@ -30,7 +30,7 @@ import static org.pac4j.core.util.CommonHelper.*;
 
 /**
  * <p>Default security logic:</p>
- * <p>
+ *
  * <p>If the HTTP request matches the <code>matchers</code> configuration (or no <code>matchers</code> are defined),
  * the security is applied. Otherwise, the user is automatically granted access.</p>
  * <p>
