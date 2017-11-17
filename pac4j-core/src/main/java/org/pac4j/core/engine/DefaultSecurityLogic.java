@@ -30,7 +30,7 @@ import static org.pac4j.core.util.CommonHelper.*;
 
 /**
  * <p>Default security logic:</p>
- *
+ * <p>
  * <p>If the HTTP request matches the <code>matchers</code> configuration (or no <code>matchers</code> are defined),
  * the security is applied. Otherwise, the user is automatically granted access.</p>
  * <p>
@@ -111,7 +111,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
 
                             final Optional<Credentials> credentials = currentClient.getCredentials(context);
                             logger.debug("credentials: {}", credentials);
-                            final Optional<CommonProfile> profile = currentClient.getUserProfile(credentials, context);
+                            final Optional<CommonProfile> profile = credentials.flatMap(c -> currentClient.getUserProfile(c, context));
                             logger.debug("profile: {}", profile);
                             if (profile.isPresent()) {
                                 final boolean saveProfileInSession = profileStorageDecision.mustSaveProfileInSession(context,
@@ -224,7 +224,7 @@ public class DefaultSecurityLogic<R, C extends WebContext> extends AbstractExcep
      */
     protected HttpAction redirectToIdentityProvider(final C context, final List<Client> currentClients) {
         final IndirectClient currentClient = (IndirectClient) currentClients.get(0);
-        return currentClient.redirect(context);
+        return (HttpAction) currentClient.redirect(context).get();
     }
 
     /**
